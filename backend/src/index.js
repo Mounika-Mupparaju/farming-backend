@@ -19,16 +19,22 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 const corsOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000'];
-if (process.env.FRONTEND_URL) {
+const frontendUrl = (process.env.FRONTEND_URL || '').trim();
+if (frontendUrl) {
   try {
-    const u = new URL(process.env.FRONTEND_URL);
-    const origin = `${u.protocol}//${u.host}`;
-    corsOrigins.push(origin);
+    const u = new URL(frontendUrl);
+    corsOrigins.push(`${u.protocol}//${u.host}`);
   } catch {
-    corsOrigins.push(process.env.FRONTEND_URL);
+    corsOrigins.push(frontendUrl);
   }
 }
-app.use(cors({ origin: corsOrigins }));
+function corsOrigin(origin, cb) {
+  if (!origin) return cb(null, true);
+  if (corsOrigins.includes(origin)) return cb(null, true);
+  if (origin.endsWith('.vercel.app')) return cb(null, true);
+  return cb(null, false);
+}
+app.use(cors({ origin: corsOrigin }));
 app.use(express.json());
 
 // Serve uploaded files: from DB when using Postgres, from disk otherwise
