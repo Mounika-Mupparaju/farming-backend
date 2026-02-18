@@ -27,15 +27,30 @@ const TABLE_COLUMNS = {
 // Columns stored as JSONB in Postgres must be sent as JSON strings
 const JSONB_COLUMNS = { posts: ['tags'], workers: ['skills'], sales_items: ['tags'] };
 
+function safeTags(v) {
+  if (Array.isArray(v)) return v;
+  if (v == null) return [];
+  if (typeof v === 'string') {
+    try {
+      const parsed = JSON.parse(v);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 function rowToPost(r) {
+  if (!r) return null;
   return {
     id: r.id,
-    farmer: r.farmer,
-    location: r.location,
-    type: r.type,
-    title: r.title,
+    farmer: r.farmer || '',
+    location: r.location || '',
+    type: r.type || 'Photo',
+    title: r.title || '',
     description: r.description || '',
-    tags: Array.isArray(r.tags) ? r.tags : (r.tags || []),
+    tags: safeTags(r.tags),
     mediaUrl: r.media_url || null,
   };
 }
@@ -172,7 +187,7 @@ async function getTable(name) {
   if (!TABLE_COLUMNS[key]) return [];
   const res = await pool.query(`SELECT * FROM ${key} ORDER BY id`);
   const rows = res.rows;
-  if (key === 'posts') return rows.map(rowToPost);
+  if (key === 'posts') return rows.map(rowToPost).filter(Boolean);
   if (key === 'equipment') return rows.map(rowToEquipment);
   if (key === 'workers') return rows.map(rowToWorker);
   if (key === 'sales_items') return rows.map(rowToSales);
