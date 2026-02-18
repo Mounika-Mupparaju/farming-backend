@@ -24,6 +24,9 @@ const TABLE_COLUMNS = {
   follows: ['client_id', 'farmer'],
 };
 
+// Columns stored as JSONB in Postgres must be sent as JSON strings
+const JSONB_COLUMNS = { posts: ['tags'], workers: ['skills'], sales_items: ['tags'] };
+
 function rowToPost(r) {
   return {
     id: r.id,
@@ -200,12 +203,15 @@ async function setTable(name, rows) {
   try {
     await client.query(`DELETE FROM ${key}`);
     const toCamel = (s) => s.replace(/_([a-z])/g, (_, l) => l.toUpperCase());
+    const jsonbCols = JSONB_COLUMNS[key] || [];
     for (const row of rows) {
       const cols = TABLE_COLUMNS[key];
       const vals = cols.map((c) => {
-        const v = row[c];
-        if (v !== undefined) return v;
-        return row[toCamel(c)];
+        const v = row[c] !== undefined ? row[c] : row[toCamel(c)];
+        if (jsonbCols.includes(c)) {
+          return typeof v === 'string' ? v : JSON.stringify(v == null ? [] : v);
+        }
+        return v;
       });
       const placeholders = vals.map((_, i) => `$${i + 1}`).join(', ');
       await client.query(`INSERT INTO ${key} (${cols.join(', ')}) VALUES (${placeholders})`, vals);
