@@ -185,7 +185,11 @@ async function get() {
 async function getTable(name) {
   const key = name === 'sales' ? 'sales_items' : name;
   if (!TABLE_COLUMNS[key]) return [];
-  const res = await pool.query(`SELECT * FROM ${key} ORDER BY id`);
+  const orderBy =
+    key === 'post_likes' || key === 'follows'
+      ? TABLE_COLUMNS[key][0]
+      : 'id';
+  const res = await pool.query(`SELECT * FROM ${key} ORDER BY ${orderBy}`);
   const rows = res.rows;
   if (key === 'posts') return rows.map(rowToPost).filter(Boolean);
   if (key === 'equipment') return rows.map(rowToEquipment);
