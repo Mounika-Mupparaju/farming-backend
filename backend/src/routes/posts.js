@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { getTable, setTable } = require('../db');
+const db = require('../db-loader');
 const { UPLOAD_DIR } = require('../uploads');
 
 const router = express.Router();
@@ -31,14 +31,15 @@ function nextId(rows) {
   return rows.length ? Math.max(...rows.map((r) => r.id)) + 1 : 1;
 }
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const clientId = req.query.clientId || '';
-    const posts = getTable('posts');
-    const likes = getTable('post_likes');
-    const comments = getTable('post_comments');
-    const follows = getTable('follows');
-
+    const [posts, likes, comments, follows] = await Promise.all([
+      db.getTable('posts'),
+      db.getTable('post_likes'),
+      db.getTable('post_comments'),
+      db.getTable('follows'),
+    ]);
     const result = posts.map((p) => {
       const likeCount = likes.filter((l) => l.postId === p.id).length;
       const commentCount = comments.filter((c) => c.postId === p.id).length;
@@ -65,8 +66,7 @@ router.get('/', (req, res) => {
   }
 });
 
-// Match both '' and '/' (mount at /api/posts leaves path as '' for POST /api/posts)
-const createPostHandler = (req, res) => {
+const createPostHandler = async (req, res) => {
   try {
     const farmer = req.body.farmer || 'My Farm';
     const location = req.body.location || '';
@@ -75,36 +75,13 @@ const createPostHandler = (req, res) => {
     const description = (req.body.description || '').trim();
     const tagsStr = req.body.tags || '';
     const tags = tagsStr ? tagsStr.split(',').map((s) => s.trim()).filter(Boolean) : [];
-
-    if (!title) {
-      return res.status(400).json({ error: 'title is required' });
-    }
-
+    if (!title) return res.status(400).json({ error: 'title is required' });
     let mediaUrl = null;
-    if (req.file && req.file.filename) {
-      mediaUrl = `/uploads/${req.file.filename}`;
-    }
-
-    const posts = getTable('posts');
-    const newPost = {
-      id: nextId(posts),
-      farmer,
-      location,
-      type: type === 'Video' ? 'Video' : 'Photo',
-      title,
-      description,
-      tags,
-      mediaUrl,
-    };
-    setTable('posts', [...posts, newPost]);
-
-    res.status(201).json({
-      ...newPost,
-      likeCount: 0,
-      commentCount: 0,
-      isLiked: false,
-      isFollowing: false,
-    });
+    if (req.file && req.file.filename) mediaUrl = `/uploads/${req.file.filename}`;
+    const posts = await db.getTable('posts');
+    const newPost = { id: nextId(posts), farmer, location, type: type === 'Video' ? 'Video' : 'Photo', title, description, tags, mediaUrl };
+    await db.setTable('posts', [...posts, newPost]);
+    res.status(201).json({ ...newPost, likeCount: 0, commentCount: 0, isLiked: false, isFollowing: false });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -112,89 +89,81 @@ const createPostHandler = (req, res) => {
 router.post('/', upload.single('media'), createPostHandler);
 router.post('', upload.single('media'), createPostHandler);
 
-router.post('/:id/like', express.json(), (req, res) => {
+router.delete('/:id', async (req, res) => {
+  try {
+    const postId = Number(req.params.id);
+    if (!Number.isFinite(postId)) return res.status(400).json({ error: 'Invalid post id' });
+    const posts = await db.getTable('posts');
+    if (!posts.some((p) => p.id === postId)) return res.status(404).json({ error: 'Post not found' });
+    const [likes, comments] = await Promise.all([db.getTable('post_likes'), db.getTable('post_comments')]);
+    await db.setTable('posts', posts.filter((p) => p.id !== postId));
+    await db.setTable('post_likes', likes.filter((l) => l.postId !== postId));
+    await db.setTable('post_comments', comments.filter((c) => c.postId !== postId));
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/:id/like', express.json(), async (req, res) => {
   try {
     const postId = Number(req.params.id);
     const clientId = req.body.clientId;
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
-
-    const posts = getTable('posts');
+    const posts = await db.getTable('posts');
     if (!posts.some((p) => p.id === postId)) return res.status(404).json({ error: 'Post not found' });
-
-    const likes = getTable('post_likes');
-    const key = { postId, clientId };
+    const likes = await db.getTable('post_likes');
     const existing = likes.findIndex((l) => l.postId === postId && l.clientId === clientId);
-    let next;
-    if (existing >= 0) {
-      next = likes.filter((_, i) => i !== existing);
-    } else {
-      next = [...likes, key];
-    }
-    setTable('post_likes', next);
-    const likeCount = next.filter((l) => l.postId === postId).length;
-    res.json({ liked: existing < 0, likeCount });
+    let next = existing >= 0 ? likes.filter((_, i) => i !== existing) : [...likes, { postId, clientId }];
+    await db.setTable('post_likes', next);
+    res.json({ liked: existing < 0, likeCount: next.filter((l) => l.postId === postId).length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-router.get('/:id/comments', (req, res) => {
+router.get('/:id/comments', async (req, res) => {
   try {
     const postId = Number(req.params.id);
-    const comments = getTable('post_comments').filter((c) => c.postId === postId);
-    res.json(comments.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+    const comments = await db.getTable('post_comments');
+    const list = comments.filter((c) => c.postId === postId).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    res.json(list);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-router.post('/:id/comments', express.json(), (req, res) => {
+router.post('/:id/comments', express.json(), async (req, res) => {
   try {
     const postId = Number(req.params.id);
     const author = (req.body.author || 'Anonymous').trim();
     const text = (req.body.text || '').trim();
     if (!text) return res.status(400).json({ error: 'text required' });
-
-    const posts = getTable('posts');
+    const posts = await db.getTable('posts');
     if (!posts.some((p) => p.id === postId)) return res.status(404).json({ error: 'Post not found' });
-
-    const comments = getTable('post_comments');
-    const newComment = {
-      id: nextId(comments),
-      postId,
-      author,
-      text,
-      createdAt: new Date().toISOString(),
-    };
-    setTable('post_comments', [...comments, newComment]);
+    const comments = await db.getTable('post_comments');
+    const newComment = { id: nextId(comments), postId, author, text, createdAt: new Date().toISOString() };
+    await db.setTable('post_comments', [...comments, newComment]);
     res.status(201).json(newComment);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-router.post('/:id/follow', express.json(), (req, res) => {
+router.post('/:id/follow', express.json(), async (req, res) => {
   try {
     const postId = Number(req.params.id);
     const clientId = req.body.clientId;
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
-
-    const posts = getTable('posts');
+    const posts = await db.getTable('posts');
     const post = posts.find((p) => p.id === postId);
     if (!post) return res.status(404).json({ error: 'Post not found' });
     const farmer = post.farmer;
-
-    const follows = getTable('follows');
+    const follows = await db.getTable('follows');
     const existing = follows.findIndex((f) => f.farmer === farmer && f.clientId === clientId);
-    let next;
-    if (existing >= 0) {
-      next = follows.filter((_, i) => i !== existing);
-    } else {
-      next = [...follows, { clientId, farmer }];
-    }
-    setTable('follows', next);
-    const isFollowing = next.some((f) => f.farmer === farmer && f.clientId === clientId);
-    res.json({ following: isFollowing });
+    let next = existing >= 0 ? follows.filter((_, i) => i !== existing) : [...follows, { clientId, farmer }];
+    await db.setTable('follows', next);
+    res.json({ following: next.some((f) => f.farmer === farmer && f.clientId === clientId) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

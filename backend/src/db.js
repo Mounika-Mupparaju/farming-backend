@@ -59,13 +59,13 @@ function get() {
   return cache;
 }
 
-function getTable(name) {
+function getTableSync(name) {
   const key = name === 'sales' ? 'sales_items' : name;
   const data = get();
   return data[key] || [];
 }
 
-function setTable(name, rows) {
+function setTableSync(name, rows) {
   const key = name === 'sales' ? 'sales_items' : name;
   const data = get();
   data[key] = rows;
@@ -84,4 +84,13 @@ function init() {
   return cache;
 }
 
-module.exports = { get, getTable, setTable, init, load, save, DB_FILE };
+// Promise API so same interface as db-pg (async)
+function getTable(name) {
+  return Promise.resolve(getTableSync(name));
+}
+function setTable(name, rows) {
+  setTableSync(name, rows);
+  return Promise.resolve();
+}
+
+module.exports = { get, getTable, setTable, init, load, save, DB_FILE, getTableSync, setTableSync };

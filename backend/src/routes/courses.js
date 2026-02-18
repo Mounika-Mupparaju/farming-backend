@@ -1,11 +1,12 @@
 const express = require('express');
-const { getTable } = require('../db');
+const db = require('../db-loader');
 
 const router = express.Router();
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    res.json(getTable('courses'));
+    const rows = await db.getTable('courses');
+    res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

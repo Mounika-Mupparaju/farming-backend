@@ -1,5 +1,5 @@
 const express = require('express');
-const { getTable, setTable } = require('../db');
+const db = require('../db-loader');
 
 const router = express.Router();
 
@@ -7,28 +7,22 @@ function nextId(rows) {
   return rows.length ? Math.max(...rows.map((r) => r.id)) + 1 : 1;
 }
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    res.json(getTable('jobs'));
+    const rows = await db.getTable('jobs');
+    res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const { title, location, type } = req.body;
-    if (!title || !location || !type) {
-      return res.status(400).json({ error: 'title, location, and type are required' });
-    }
-    const rows = getTable('jobs');
-    const newRow = {
-      id: nextId(rows),
-      title: title.trim(),
-      location: location.trim(),
-      type: type.trim(),
-    };
-    setTable('jobs', [...rows, newRow]);
+    if (!title || !location || !type) return res.status(400).json({ error: 'title, location, and type are required' });
+    const rows = await db.getTable('jobs');
+    const newRow = { id: nextId(rows), title: title.trim(), location: location.trim(), type: type.trim() };
+    await db.setTable('jobs', [...rows, newRow]);
     res.status(201).json(newRow);
   } catch (err) {
     res.status(500).json({ error: err.message });
